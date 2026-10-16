@@ -959,10 +959,16 @@ function fillTokenFields(form, token) {
   form.digits.value = String(token.digits ?? 6);
   form.period.value = String(token.period ?? 30);
   form.algorithm.value = token.algorithm ?? 'SHA1';
+  // Unusual parameters stay in view, since they're worth knowing about.
+  form.querySelector('.advanced').open =
+    form.digits.value !== '6' ||
+    form.period.value !== '30' ||
+    form.algorithm.value !== 'SHA1';
 }
 
 $('#add-button').addEventListener('click', () => {
   addForm.reset();
+  addForm.querySelector('.advanced').open = false;
   addForm.querySelector('.error').textContent = '';
   addDialog.showModal();
 });
@@ -1365,6 +1371,22 @@ const plaintextExports = {
     'text/plain',
   ],
 };
+
+// Title bar.
+
+// With the Window Controls Overlay, the toolbar moves into the title bar.
+// The user can fold the overlay away, which brings the regular header back.
+const overlay = navigator.windowControlsOverlay;
+
+function updateTitleBar() {
+  document.documentElement.classList.toggle(
+    'titlebar',
+    Boolean(overlay?.visible),
+  );
+}
+
+overlay?.addEventListener('geometrychange', updateTitleBar);
+updateTitleBar();
 
 for (const [id, build] of Object.entries(plaintextExports)) {
   $(`#${id}`).addEventListener('click', () => {

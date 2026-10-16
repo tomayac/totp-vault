@@ -195,31 +195,38 @@
             autocapitalize="characters"
             spellcheck="false"
         /></label>
-        <div class="row">
-          <label
-            >Digits
-            <select name="digits">
-              <option>6</option>
-              <option>7</option>
-              <option>8</option>
-            </select>
-          </label>
-          <label
-            >Period
-            <select name="period">
-              <option value="30">30 s</option>
-              <option value="60">60 s</option>
-            </select>
-          </label>
-          <label
-            >Algorithm
-            <select name="algorithm">
-              <option>SHA1</option>
-              <option>SHA256</option>
-              <option>SHA512</option>
-            </select>
-          </label>
-        </div>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <p class="note">
+            The service sets these when you enroll, and a QR code or link fills
+            them in. Change them only if the codes don’t match the service’s.
+          </p>
+          <div class="row">
+            <label
+              >Digits
+              <select name="digits">
+                <option>6</option>
+                <option>7</option>
+                <option>8</option>
+              </select>
+            </label>
+            <label
+              >Period
+              <select name="period">
+                <option value="30">30 s</option>
+                <option value="60">60 s</option>
+              </select>
+            </label>
+            <label
+              >Algorithm
+              <select name="algorithm">
+                <option>SHA1</option>
+                <option>SHA256</option>
+                <option>SHA512</option>
+              </select>
+            </label>
+          </div>
+        </details>
         <p class="error" role="alert"></p>
         <div class="buttons">
           <button type="button" data-close>Cancel</button>
@@ -248,31 +255,39 @@
           <button type="button" id="upload-icon">Choose image</button>
           <button type="button" id="remove-icon">Remove</button>
         </div>
-        <div class="row">
-          <label
-            >Digits
-            <select name="digits">
-              <option>6</option>
-              <option>7</option>
-              <option>8</option>
-            </select>
-          </label>
-          <label
-            >Period
-            <select name="period">
-              <option value="30">30 s</option>
-              <option value="60">60 s</option>
-            </select>
-          </label>
-          <label
-            >Algorithm
-            <select name="algorithm">
-              <option>SHA1</option>
-              <option>SHA256</option>
-              <option>SHA512</option>
-            </select>
-          </label>
-        </div>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <p class="note">
+            The service set these when you enrolled. Changing them doesn’t
+            change your account, only how this app computes codes, so change
+            them only if the codes don’t match the service’s.
+          </p>
+          <div class="row">
+            <label
+              >Digits
+              <select name="digits">
+                <option>6</option>
+                <option>7</option>
+                <option>8</option>
+              </select>
+            </label>
+            <label
+              >Period
+              <select name="period">
+                <option value="30">30 s</option>
+                <option value="60">60 s</option>
+              </select>
+            </label>
+            <label
+              >Algorithm
+              <select name="algorithm">
+                <option>SHA1</option>
+                <option>SHA256</option>
+                <option>SHA512</option>
+              </select>
+            </label>
+          </div>
+        </details>
         <div class="buttons">
           <button type="button" id="delete-token" class="danger">Delete</button>
           <button type="button" id="copy-link">Copy otpauth link</button>

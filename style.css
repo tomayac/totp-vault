@@ -542,3 +542,60 @@ button.link {
 #welcome-view .choice {
   width: 100%;
 }
+
+/* Installed with the Window Controls Overlay, the header fills the title bar
+   area next to the window controls, and dragging it moves the window. */
+.titlebar .bar {
+  position: fixed;
+  top: env(titlebar-area-y, 0);
+  left: env(titlebar-area-x, 0);
+  width: env(titlebar-area-width, 100%);
+  height: env(titlebar-area-height, 33px);
+  max-width: none;
+  margin: 0;
+  padding: 0 8px;
+  flex-wrap: nowrap;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.titlebar .bar h1 {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.titlebar .actions {
+  gap: 0.25rem;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar .actions button {
+  padding: 0.1rem 0.55rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.titlebar main {
+  padding-top: calc(env(titlebar-area-height, 33px) + 0.75rem);
+}
+
+@media (max-width: 480px) {
+  .titlebar .bar h1 {
+    display: none;
+  }
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.advanced[open] summary {
+  margin-bottom: 0.6rem;
+}
+
+.advanced .note {
+  margin: 0 0 0.6rem;
+}

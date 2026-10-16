@@ -44,11 +44,14 @@ import {
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 const HIDDEN_LOCK_MS = 60 * 1000;
 const EXPIRING_SECONDS = 5;
-const ICON_FETCH_CONCURRENCY = 4;
+// icon.horse rate limits clients that ask too fast.
+const ICON_INTERVAL_MS = 1000;
+const ICON_BACKOFF_MS = 2000;
+const ICON_RETRIES = 4;
 // Waiting a moment batches quick successive edits into one commit.
 const SYNC_DELAY_MS = 1500;
 const MIN_PASSWORD_LENGTH = 8;
-const ICONS_ASKED_KEY = 'totp-vault.icons-asked';
+const ICONS_DISMISSED_KEY = 'totp-vault.icons-dismissed';
 const DEFAULT_GITHUB = {
   owner: '',
   repo: 'totp-vault-data',
@@ -210,7 +213,7 @@ function renderList() {
     (token) => !token.icon,
   ).length;
   $('#icon-banner').hidden =
-    missingIcons === 0 || Boolean(load(ICONS_ASKED_KEY));
+    missingIcons === 0 || Boolean(load(ICONS_DISMISSED_KEY));
   $('#icon-banner-count').textContent =
     `${plural(missingIcons, 'token has', 'tokens have')} no icon yet.`;
   $('#empty-note').hidden = session.vault.tokens.length > 0;
@@ -299,7 +302,7 @@ async function startSession(key, vault, github = null) {
 async function createVault(key, vault) {
   remove(KEYS.github);
   remove(KEYS.sync);
-  remove(ICONS_ASKED_KEY);
+  remove(ICONS_DISMISSED_KEY);
   session = { key, vault, hmacKeys: new Map(), github: null, oldKeys: [] };
   await persist({ backup: false });
   await startSession(key, vault);
@@ -328,7 +331,7 @@ function forgetDevice() {
   ) {
     return;
   }
-  for (const key of [...Object.values(KEYS), ICONS_ASKED_KEY]) {
+  for (const key of [...Object.values(KEYS), ICONS_DISMISSED_KEY]) {
     remove(key);
   }
   session = null;
@@ -785,7 +788,7 @@ $('#welcome-github').addEventListener('click', async () => {
   const vault = fromCxf(JSON.parse(await open(found.jwe, key)));
   save(KEYS.vault, found.jwe);
   save(KEYS.sync, { sha: found.remote.sha, dirty: false });
-  remove(ICONS_ASKED_KEY);
+  remove(ICONS_DISMISSED_KEY);
   await startSession(key, vault, found.settings);
   await saveGitHubSettings();
   showToast(`Restored ${plural(vault.tokens.length, 'token')}.`);
@@ -857,54 +860,78 @@ tokenList.addEventListener('click', async (event) => {
 
 // Icons.
 
-/** Fetches icons for `tokens` a few at a time and returns how many worked. */
-async function fetchIcons(tokens) {
-  const queue = [...tokens];
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetches icons for `tokens` one at a time, pausing between requests and
+ * backing off when icon.horse rate limits. Stops when the vault locks.
+ * Returns how many icons it got.
+ */
+async function fetchIcons(tokens, onProgress) {
+  const current = session;
   let fetched = 0;
-  const worker = async () => {
-    for (let token = queue.shift(); token; token = queue.shift()) {
-      const domain = guessDomain(token);
-      if (!domain) {
-        continue;
-      }
+  for (const [index, token] of tokens.entries()) {
+    const domain = guessDomain(token);
+    for (let attempt = 0; domain; attempt++) {
       try {
         token.icon = await fetchIcon(domain);
         token.url ||= domain;
         token.modifiedAt = now();
         fetched++;
-      } catch {
-        // Leave the initial in place for tokens without an icon.
+        break;
+      } catch (error) {
+        if (!error.retry || attempt >= ICON_RETRIES) {
+          break;
+        }
+        await sleep(ICON_BACKOFF_MS * 2 ** attempt);
+      }
+      if (session !== current) {
+        return fetched;
       }
     }
-  };
-  await Promise.all(Array.from({ length: ICON_FETCH_CONCURRENCY }, worker));
+    onProgress(index + 1);
+    await sleep(ICON_INTERVAL_MS);
+    if (session !== current) {
+      break;
+    }
+  }
   return fetched;
 }
 
 $('#fetch-icons').addEventListener('click', async (event) => {
   const button = event.target;
+  const current = session;
   const tokens = session.vault.tokens.filter((token) => !token.icon);
   button.disabled = true;
-  button.textContent = 'Getting icons…';
-  const fetched = await fetchIcons(tokens);
-  save(ICONS_ASKED_KEY, true);
+  const fetched = await fetchIcons(tokens, (done) => {
+    button.textContent = `Getting icons… ${done} of ${tokens.length}`;
+  });
   button.disabled = false;
   button.textContent = 'Get icons';
+  if (session !== current) {
+    return;
+  }
   if (fetched) {
     await persist();
   }
-  renderList();
   const missed = tokens.length - fetched;
+  // The banner stays while icons are missing, so another run can fill them in.
+  if (!missed) {
+    save(ICONS_DISMISSED_KEY, true);
+  }
+  renderList();
   showToast(
     `Got ${plural(fetched, 'icon')}.` +
       (missed
-        ? ` For the other ${missed}, set the website or an image under ⋯.`
+        ? ` ${missed} still ${missed === 1 ? 'has' : 'have'} none: try again later, or set the website or an image under ⋯.`
         : ''),
   );
 });
 
 $('#dismiss-icons').addEventListener('click', () => {
-  save(ICONS_ASKED_KEY, true);
+  save(ICONS_DISMISSED_KEY, true);
   renderList();
 });
 

@@ -81,14 +81,33 @@ export async function imageToDataUrl(blob) {
   }
 }
 
+export class IconError extends Error {
+  /** `retry` marks failures that may go away when asked again later. */
+  constructor(message, retry) {
+    super(message);
+    this.name = 'IconError';
+    this.retry = retry;
+  }
+}
+
 /** Fetches the favicon for `domain` as a data URL. */
 export async function fetchIcon(domain) {
-  const response = await fetch(ICON_SERVICE + encodeURIComponent(domain), {
-    credentials: 'omit',
-    referrerPolicy: 'no-referrer',
-  });
+  let response;
+  try {
+    response = await fetch(ICON_SERVICE + encodeURIComponent(domain), {
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+  } catch {
+    // icon.horse sends its 429 responses without CORS headers, so a rate
+    // limit looks like a network error.
+    throw new IconError('icon.horse is unreachable or rate limiting.', true);
+  }
   if (!response.ok) {
-    throw new Error(`icon.horse answered ${response.status}`);
+    throw new IconError(
+      `icon.horse answered ${response.status}.`,
+      response.status === 429 || response.status >= 500,
+    );
   }
   return imageToDataUrl(await response.blob());
 }

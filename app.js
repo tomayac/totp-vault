@@ -1372,6 +1372,18 @@ const plaintextExports = {
   ],
 };
 
+// Launches.
+
+// The manifest's `launch_handler` focuses the open window for every launch
+// of the installed app, so there's only ever one, and an unlocked vault
+// stays unlocked. Each launch arrives here; the app has a single page, so
+// readying the password field is all a launch needs.
+window.launchQueue?.setConsumer(() => {
+  if (!session && !views.unlock.hidden) {
+    $('#password').focus();
+  }
+});
+
 // Title bar.
 
 // With the Window Controls Overlay, the toolbar moves into the title bar.

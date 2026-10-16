@@ -372,7 +372,14 @@ function askPassword({
       passwordForm.reset();
       resolve(value);
     };
-    const onClose = () => finish(null);
+    // `close` fires asynchronously, so when one prompt follows another, the
+    // first prompt's event arrives while the dialog is open again. Only a
+    // `close` that leaves the dialog closed is a cancel.
+    const onClose = () => {
+      if (!passwordDialog.open) {
+        finish(null);
+      }
+    };
     const onSubmit = async (event) => {
       event.preventDefault();
       const password = passwordForm.password.value;
@@ -423,7 +430,12 @@ function askGitHub({ title, submitLabel, verify }) {
       githubForm.token.value = '';
       resolve(value);
     };
-    const onClose = () => finish(null);
+    // See `askPassword()`.
+    const onClose = () => {
+      if (!githubDialog.open) {
+        finish(null);
+      }
+    };
     const onSubmit = async (event) => {
       event.preventDefault();
       const settings = Object.fromEntries(
@@ -1337,6 +1349,19 @@ for (const [id, build] of Object.entries(plaintextExports)) {
 }
 
 if ('serviceWorker' in navigator) {
+  // A new version takes over right away. Reloading shows it, unless that
+  // would lock an unlocked vault.
+  const updating = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!updating) {
+      return;
+    }
+    if (session) {
+      showToast('An update is ready. It applies when you next open the app.');
+    } else {
+      location.reload();
+    }
+  });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 

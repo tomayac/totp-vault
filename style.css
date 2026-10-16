@@ -529,9 +529,13 @@ button.link {
   text-underline-offset: 0.2em;
 }
 
+#copy-hint {
+  margin: 0 0 0.75rem;
+}
+
 #sync-status {
   display: block;
-  margin: 0 0 0.75rem;
+  margin: 1rem 0 0;
   text-decoration: none;
 }
 

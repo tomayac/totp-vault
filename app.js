@@ -217,6 +217,7 @@ function renderList() {
   $('#icon-banner-count').textContent =
     `${plural(missingIcons, 'token has', 'tokens have')} no icon yet.`;
   $('#empty-note').hidden = session.vault.tokens.length > 0;
+  $('#copy-hint').hidden = session.vault.tokens.length === 0;
   tick();
 }
 
@@ -293,8 +294,19 @@ async function startSession(key, vault, github = null) {
   lastActivity = Date.now();
   searchInput.value = '';
   render();
+  focusSearch();
   if (session.github) {
     sync();
+  }
+}
+
+/**
+ * Focuses the search field, so typing filters right away. Touch devices are
+ * left alone, where focusing would raise a keyboard over the codes.
+ */
+function focusSearch() {
+  if (matchMedia('(pointer: fine)').matches) {
+    searchInput.focus();
   }
 }
 
@@ -1377,9 +1389,11 @@ const plaintextExports = {
 // The manifest's `launch_handler` focuses the open window for every launch
 // of the installed app, so there's only ever one, and an unlocked vault
 // stays unlocked. Each launch arrives here; the app has a single page, so
-// readying the password field is all a launch needs.
+// readying the right field is all a launch needs.
 window.launchQueue?.setConsumer(() => {
-  if (!session && !views.unlock.hidden) {
+  if (session) {
+    focusSearch();
+  } else if (!views.unlock.hidden) {
     $('#password').focus();
   }
 });
@@ -1427,3 +1441,7 @@ if ('serviceWorker' in navigator) {
 }
 
 render();
+// The unlock view is hidden while the page parses, so `autofocus` misses it.
+if (!views.unlock.hidden) {
+  $('#password').focus();
+}

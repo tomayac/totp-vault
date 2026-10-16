@@ -372,11 +372,26 @@ details[open] summary {
 
 dialog {
   width: min(28rem, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  /* Scrolling past the end of a tall dialog stays in the dialog. */
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
   padding: 1.25rem;
+}
+
+html {
+  /* Keeps the layout steady when the rule below hides the scrollbar. */
+  scrollbar-gutter: stable;
+}
+
+/* Scrolling over a modal dialog that can't scroll itself would otherwise
+   scroll the page behind it. */
+html:has(dialog:modal) {
+  overflow: hidden;
 }
 
 dialog::backdrop {

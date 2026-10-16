@@ -4,7 +4,7 @@
  */
 
 // Bump `CACHE` whenever any of `ASSETS` changes, so installed copies update.
-const CACHE = 'totp-vault-v8';
+const CACHE = 'totp-vault-v9';
 const ASSETS = [
   './',
   './index.html',

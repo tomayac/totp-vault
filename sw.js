@@ -4,7 +4,7 @@
  */
 
 // Bump `CACHE` whenever any of `ASSETS` changes, so installed copies update.
-const CACHE = 'totp-vault-v9';
+const CACHE = 'totp-vault-v10';
 const ASSETS = [
   './',
   './index.html',
@@ -17,6 +17,7 @@ const ASSETS = [
   './jwe.js',
   './scanner.js',
   './store.js',
+  './usage.js',
   './vault.js',
   './vendor/jsQR.js',
   './manifest.webmanifest',

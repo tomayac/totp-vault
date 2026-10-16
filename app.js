@@ -29,6 +29,7 @@ import {
 import { createKey, open, seal, sealedWith, unlockKey } from './jwe.js';
 import { Scanner, saveCamera, scanImage } from './scanner.js';
 import { KEYS, load, remove, save } from './store.js';
+import { byUsage, recordUse } from './usage.js';
 import {
   createToken,
   displayName,
@@ -180,10 +181,14 @@ function renderList() {
   }
   const query = searchInput.value.trim().toLowerCase();
   const tokens = [...session.vault.tokens].sort(
-    (a, b) =>
-      displayName(a).localeCompare(displayName(b), undefined, {
-        sensitivity: 'base',
-      }) || a.account.localeCompare(b.account),
+    byUsage(
+      load(KEYS.usage),
+      Date.now(),
+      (a, b) =>
+        displayName(a).localeCompare(displayName(b), undefined, {
+          sensitivity: 'base',
+        }) || a.account.localeCompare(b.account),
+    ),
   );
   for (const token of tokens) {
     if (
@@ -867,6 +872,24 @@ tokenList.addEventListener('click', async (event) => {
     showToast(`Copied the ${displayName(entry.token)} code.`);
   } catch {
     showToast('Couldn’t copy. Select the code to copy it by hand.');
+    return;
+  }
+  save(
+    KEYS.usage,
+    recordUse(
+      load(KEYS.usage),
+      entry.token.id,
+      Date.now(),
+      new Set(session.vault.tokens.map((token) => token.id)),
+    ),
+  );
+  // A search has done its job once a code is copied. Clearing it also
+  // re-sorts the list. Without a search, the order stays put until the next
+  // redraw, so tokens don't move under the pointer.
+  if (searchInput.value) {
+    searchInput.value = '';
+    renderList();
+    focusSearch();
   }
 });
 

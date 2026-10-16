@@ -4,11 +4,13 @@
  */
 
 // Everything stored is either encrypted or harmless: the vault and the GitHub
-// settings are JWEs, and the sync state holds only a commit hash and a flag.
+// settings are JWEs, the sync state holds only a commit hash and a flag, and
+// the usage counts are keyed by random token IDs.
 export const KEYS = {
   vault: 'totp-vault.vault',
   github: 'totp-vault.github',
   sync: 'totp-vault.sync',
+  usage: 'totp-vault.usage',
 };
 
 // Keeps values for this page load when storage is unavailable, for example

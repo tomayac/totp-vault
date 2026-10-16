@@ -1,0 +1,9 @@
+# Exports and Authy data contain 2FA secrets. Keep them out of git.
+*.csv
+*.jwe.json
+*.cxf.json
+bitwarden-totp-*.json
+totp-otpauth-*.txt
+.claude/
+node_modules/
+.DS_Store

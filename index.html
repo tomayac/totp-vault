@@ -1,0 +1,484 @@
+<!doctype html>
+<!--
+  Copyright 2026 Thomas Steiner
+  SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://icon.horse https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>TOTP Vault</title>
+    <meta
+      name="description"
+      content="An offline two-factor code generator with an encrypted GitHub backup."
+    />
+    <meta
+      name="theme-color"
+      content="#f5f6f8"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0f1115"
+      media="(prefers-color-scheme: dark)"
+    />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header class="bar">
+      <h1>TOTP Vault</h1>
+      <nav class="actions" aria-label="Vault">
+        <button type="button" id="add-button" hidden>Add</button>
+        <button type="button" id="import-button" hidden>Import</button>
+        <button type="button" id="export-button" hidden>Export</button>
+        <button type="button" id="settings-button" hidden>Settings</button>
+        <button type="button" id="lock-button" hidden>Lock</button>
+      </nav>
+    </header>
+
+    <input
+      type="file"
+      id="file-input"
+      class="visually-hidden"
+      multiple
+      accept=".json,.txt,application/json,text/plain"
+      tabindex="-1"
+    />
+    <input
+      type="file"
+      id="image-input"
+      class="visually-hidden"
+      accept="image/*"
+      tabindex="-1"
+    />
+
+    <main>
+      <section id="welcome-view" class="panel" hidden>
+        <h2>Set up your vault</h2>
+        <p>
+          TOTP Vault keeps your two-factor tokens encrypted on this device and
+          can back them up to a private GitHub repository.
+        </p>
+        <button type="button" id="welcome-import" class="choice">
+          <strong>Import a file</strong>
+          <span
+            >An encrypted vault from this app, a CXF file (FIDO Credential
+            Exchange Format), an unencrypted Bitwarden JSON export, or a text
+            file of <code>otpauth://</code> links. You can also drop files
+            here.</span
+          >
+        </button>
+        <button type="button" id="welcome-github" class="choice">
+          <strong>Restore from GitHub</strong>
+          <span>Open the backup in your private repository.</span>
+        </button>
+        <button type="button" id="welcome-empty" class="choice">
+          <strong>Start empty</strong>
+          <span>Choose a password and add tokens one by one.</span>
+        </button>
+      </section>
+
+      <section id="unlock-view" class="panel" hidden>
+        <form id="unlock-form" class="stack">
+          <h2>Unlock</h2>
+          <p>Your vault on this device is encrypted with your password.</p>
+          <label
+            >Password
+            <input
+              type="password"
+              id="password"
+              autocomplete="current-password"
+              required
+              autofocus
+          /></label>
+          <p class="error" id="unlock-error" role="alert"></p>
+          <button type="submit" class="primary">Unlock</button>
+        </form>
+        <button type="button" class="link" id="forget-locked">
+          Use a different vault
+        </button>
+      </section>
+
+      <section id="vault-view" hidden>
+        <input
+          type="search"
+          id="search"
+          placeholder="Search"
+          aria-label="Search tokens"
+          autocomplete="off"
+        />
+        <button type="button" class="link" id="sync-status" hidden></button>
+        <div class="banner" id="icon-banner" hidden>
+          <p>
+            <span id="icon-banner-count"></span> The app can look up each
+            service’s icon at icon.horse, which tells icon.horse the websites
+            you use.
+          </p>
+          <div class="buttons">
+            <button type="button" id="dismiss-icons">Not now</button>
+            <button type="button" id="fetch-icons" class="primary">
+              Get icons
+            </button>
+          </div>
+        </div>
+        <p class="note" id="empty-note" hidden>
+          No tokens yet. Add one, or import a file.
+        </p>
+        <ul id="token-list"></ul>
+        <p class="note">Tap a code to copy it.</p>
+      </section>
+    </main>
+
+    <template id="token-template">
+      <li class="token">
+        <button type="button" class="copy">
+          <span class="icon" aria-hidden="true"></span>
+          <span class="label">
+            <span class="issuer"></span>
+            <span class="account"></span>
+          </span>
+          <span class="code" aria-live="off"></span>
+        </button>
+        <button type="button" class="edit" aria-label="Edit token">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="19" cy="12" r="2" />
+          </svg>
+        </button>
+        <span class="progress"></span>
+      </li>
+    </template>
+
+    <dialog id="add-dialog">
+      <form id="add-form" class="stack">
+        <h2>Add token</h2>
+        <button type="button" id="scan-button" class="primary">
+          Scan QR code
+        </button>
+        <label
+          >Or paste an otpauth link
+          <textarea
+            name="uri"
+            rows="2"
+            placeholder="otpauth://totp/…"
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <label>Issuer <input name="issuer" autocomplete="off" /></label>
+        <label>Account <input name="account" autocomplete="off" /></label>
+        <label
+          >Website, for the icon
+          <input
+            name="url"
+            autocomplete="off"
+            inputmode="url"
+            placeholder="example.com"
+            spellcheck="false"
+        /></label>
+        <label
+          >Secret key, when there’s no QR code or link
+          <input
+            name="secret"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+        /></label>
+        <div class="row">
+          <label
+            >Digits
+            <select name="digits">
+              <option>6</option>
+              <option>7</option>
+              <option>8</option>
+            </select>
+          </label>
+          <label
+            >Period
+            <select name="period">
+              <option value="30">30 s</option>
+              <option value="60">60 s</option>
+            </select>
+          </label>
+          <label
+            >Algorithm
+            <select name="algorithm">
+              <option>SHA1</option>
+              <option>SHA256</option>
+              <option>SHA512</option>
+            </select>
+          </label>
+        </div>
+        <p class="error" role="alert"></p>
+        <div class="buttons">
+          <button type="button" data-close>Cancel</button>
+          <button type="submit" class="primary">Add</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="edit-dialog">
+      <form id="edit-form" class="stack">
+        <h2>Edit token</h2>
+        <label>Issuer <input name="issuer" autocomplete="off" /></label>
+        <label>Account <input name="account" autocomplete="off" /></label>
+        <label
+          >Website
+          <input
+            name="url"
+            autocomplete="off"
+            inputmode="url"
+            placeholder="example.com"
+            spellcheck="false"
+        /></label>
+        <div class="icon-row">
+          <span class="icon large" id="edit-icon" aria-hidden="true"></span>
+          <button type="button" id="fetch-icon">Get icon</button>
+          <button type="button" id="upload-icon">Choose image</button>
+          <button type="button" id="remove-icon">Remove</button>
+        </div>
+        <div class="row">
+          <label
+            >Digits
+            <select name="digits">
+              <option>6</option>
+              <option>7</option>
+              <option>8</option>
+            </select>
+          </label>
+          <label
+            >Period
+            <select name="period">
+              <option value="30">30 s</option>
+              <option value="60">60 s</option>
+            </select>
+          </label>
+          <label
+            >Algorithm
+            <select name="algorithm">
+              <option>SHA1</option>
+              <option>SHA256</option>
+              <option>SHA512</option>
+            </select>
+          </label>
+        </div>
+        <div class="buttons">
+          <button type="button" id="delete-token" class="danger">Delete</button>
+          <button type="button" id="copy-link">Copy otpauth link</button>
+        </div>
+        <div class="buttons">
+          <button type="button" data-close>Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="export-dialog">
+      <div class="stack">
+        <h2>Export</h2>
+        <button type="button" id="export-vault" class="choice">
+          <strong>Encrypted vault</strong>
+          <span
+            >The same file the GitHub backup holds: a CXF document inside a JSON
+            Web Encryption envelope, locked with your password. Import it on
+            another device.</span
+          >
+        </button>
+        <button type="button" id="export-cxf" class="choice">
+          <strong>CXF</strong>
+          <span
+            >The FIDO Credential Exchange Format, unencrypted, for password
+            managers that import it.</span
+          >
+        </button>
+        <button type="button" id="export-bitwarden" class="choice">
+          <strong>Bitwarden / Vaultwarden</strong>
+          <span
+            >Unencrypted JSON for Import data in Bitwarden. It creates one login
+            item per token.</span
+          >
+        </button>
+        <button type="button" id="export-otpauth" class="choice">
+          <strong>otpauth links</strong>
+          <span
+            >An unencrypted text file with one <code>otpauth://</code> link per
+            line, for apps like Ente Auth.</span
+          >
+        </button>
+        <div class="buttons">
+          <button type="button" data-close>Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="scan-dialog">
+      <div class="stack">
+        <h2>Scan QR code</h2>
+        <video id="scan-video" playsinline muted></video>
+        <label id="camera-label" hidden
+          >Camera
+          <select id="camera-select"></select>
+        </label>
+        <p class="note" id="scan-status" role="status"></p>
+        <div class="buttons">
+          <button type="button" id="scan-image">Scan an image</button>
+          <button type="button" data-close>Cancel</button>
+        </div>
+        <p class="note">
+          On a computer, you can also paste or drop a screenshot of the QR code.
+        </p>
+      </div>
+    </dialog>
+
+    <dialog id="password-dialog">
+      <form id="password-form" class="stack">
+        <h2 id="password-title"></h2>
+        <p id="password-message"></p>
+        <input
+          type="text"
+          name="username"
+          autocomplete="username"
+          value="TOTP Vault"
+          hidden
+        />
+        <label
+          >Password
+          <input type="password" name="password" required />
+        </label>
+        <label id="confirm-label"
+          >Repeat password
+          <input type="password" name="confirm" autocomplete="new-password" />
+        </label>
+        <p class="error" role="alert"></p>
+        <div class="buttons">
+          <button type="button" data-close>Cancel</button>
+          <button type="submit" class="primary" id="password-submit"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="github-dialog">
+      <form id="github-form" class="stack">
+        <h2 id="github-title"></h2>
+        <p class="note">
+          Use a
+          <a
+            href="https://github.com/settings/personal-access-tokens/new"
+            target="_blank"
+            rel="noopener"
+            >fine-grained personal access token</a
+          >
+          with access to only this repository and the permission
+          <strong>Contents: Read and write</strong>. The app stores the token
+          encrypted with your vault.
+        </p>
+        <div class="row two">
+          <label
+            >Owner
+            <input
+              name="owner"
+              required
+              autocomplete="off"
+              spellcheck="false"
+              autocapitalize="off"
+          /></label>
+          <label
+            >Repository
+            <input
+              name="repo"
+              required
+              autocomplete="off"
+              spellcheck="false"
+              autocapitalize="off"
+          /></label>
+        </div>
+        <div class="row two">
+          <label
+            >File
+            <input
+              name="path"
+              required
+              autocomplete="off"
+              spellcheck="false"
+              autocapitalize="off"
+          /></label>
+          <label
+            >Branch
+            <input
+              name="branch"
+              placeholder="default"
+              autocomplete="off"
+              spellcheck="false"
+              autocapitalize="off"
+          /></label>
+        </div>
+        <label
+          >Token
+          <input
+            name="token"
+            type="password"
+            required
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="github_pat_…"
+        /></label>
+        <p class="error" role="alert"></p>
+        <div class="buttons">
+          <button type="button" data-close>Cancel</button>
+          <button type="submit" class="primary" id="github-submit"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <div class="stack">
+        <h2>Settings</h2>
+        <section class="stack">
+          <h3>GitHub backup</h3>
+          <p id="settings-github-summary"></p>
+          <div class="buttons start">
+            <button type="button" id="settings-github"></button>
+            <button type="button" id="settings-sync">Back up now</button>
+            <button type="button" id="settings-disconnect" class="danger">
+              Turn off
+            </button>
+          </div>
+        </section>
+        <section class="stack">
+          <h3>Password</h3>
+          <p class="note">
+            Changing the password re-encrypts the vault here and in the backup.
+            Earlier versions in the repository’s history keep the old password.
+          </p>
+          <div class="buttons start">
+            <button type="button" id="change-password">Change password</button>
+          </div>
+        </section>
+        <section class="stack">
+          <h3>This device</h3>
+          <div class="buttons start">
+            <button type="button" id="forget-unlocked" class="danger">
+              Remove the vault from this device
+            </button>
+          </div>
+        </section>
+        <div class="buttons">
+          <button type="button" data-close>Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

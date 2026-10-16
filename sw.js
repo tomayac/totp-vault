@@ -4,7 +4,7 @@
  */
 
 // Bump `CACHE` whenever any of `ASSETS` changes, so installed copies update.
-const CACHE = 'totp-vault-v10';
+const CACHE = 'totp-vault-v11';
 const ASSETS = [
   './',
   './index.html',
@@ -32,7 +32,13 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(ASSETS))
+      // Bypass the HTTP cache: GitHub Pages lets browsers keep files for 10
+      // minutes, and a new version must not cache the previous one's files.
+      .then((cache) =>
+        cache.addAll(
+          ASSETS.map((asset) => new Request(asset, { cache: 'reload' })),
+        ),
+      )
       .then(() => self.skipWaiting()),
   );
 });

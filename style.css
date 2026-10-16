@@ -256,7 +256,8 @@ details[open] summary {
 }
 
 #search {
-  margin-bottom: 0.75rem;
+  /* Room for the focus ring, which the sticky header would cover. */
+  margin: 0.375rem 0 0.75rem;
   background: var(--surface);
 }
 
@@ -386,6 +387,9 @@ dialog {
 html {
   /* Keeps the layout steady when the rule below hides the scrollbar. */
   scrollbar-gutter: stable;
+  /* Elements scrolled into view, for example by keyboard focus, stop below
+     the sticky header. */
+  scroll-padding-top: 5rem;
 }
 
 /* Scrolling over a modal dialog that can't scroll itself would otherwise

@@ -242,3 +242,29 @@ test('readImportFile() recognizes every export format', async () => {
   }
   await assert.rejects(readImportFile(file('x.txt', 'hello')), /isn’t a vault/);
 });
+
+test('a wrapped vault key unlocks the vault without the password', async () => {
+  const { unlockWithWrappedKey, wrapKeyWith } = await import('../jwe.js');
+  const key = await createKey('correct horse battery');
+  const jwe = await seal(key, 'secret codes');
+  const wrappingKey = await crypto.subtle.generateKey(
+    { name: 'AES-KW', length: 256 },
+    false,
+    ['wrapKey', 'unwrapKey'],
+  );
+  const wrapped = await wrapKeyWith(jwe, 'correct horse battery', wrappingKey);
+  const unwrapped = await unlockWithWrappedKey(jwe, wrapped, wrappingKey);
+  assert.equal(await open(jwe, unwrapped), 'secret codes');
+  assert.ok(sealedWith(jwe, unwrapped));
+  // Wrapping proves the password first.
+  await assert.rejects(
+    wrapKeyWith(jwe, 'wrong horse battery', wrappingKey),
+    WrongPasswordError,
+  );
+  const otherKey = await crypto.subtle.generateKey(
+    { name: 'AES-KW', length: 256 },
+    false,
+    ['wrapKey', 'unwrapKey'],
+  );
+  await assert.rejects(unlockWithWrappedKey(jwe, wrapped, otherKey));
+});

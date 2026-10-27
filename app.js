@@ -26,7 +26,20 @@ import {
   imageToDataUrl,
   renderIcon,
 } from './icons.js';
-import { createKey, open, seal, sealedWith, unlockKey } from './jwe.js';
+import {
+  createKey,
+  open,
+  seal,
+  sealedWith,
+  unlockKey,
+  unlockWithWrappedKey,
+  wrapKeyWith,
+} from './jwe.js';
+import {
+  createPasskey,
+  passkeyWrappingKey,
+  passkeysSupported,
+} from './passkey.js';
 import { Scanner, saveCamera, scanImage } from './scanner.js';
 import { KEYS, load, remove, save } from './store.js';
 import { byUsage, recordUse } from './usage.js';
@@ -160,6 +173,7 @@ function render() {
   views.welcome.hidden = Boolean(session) || stored;
   views.unlock.hidden = Boolean(session) || !stored;
   views.vault.hidden = !session;
+  $('#passkey-unlock').hidden = !load(KEYS.passkey);
   for (const id of [
     'add-button',
     'import-button',
@@ -319,6 +333,7 @@ function focusSearch() {
 async function createVault(key, vault) {
   remove(KEYS.github);
   remove(KEYS.sync);
+  remove(KEYS.passkey);
   remove(ICONS_DISMISSED_KEY);
   session = { key, vault, hmacKeys: new Map(), github: null, oldKeys: [] };
   await persist({ backup: false });
@@ -539,27 +554,36 @@ async function pullRemote(text) {
   let key = [session.key, ...session.oldKeys].find((candidate) =>
     sealedWith(jwe, candidate),
   );
+  let password = null;
   if (!key) {
-    key = await askPassword({
+    const answer = await askPassword({
       title: 'The backup has another password',
       message:
         'The vault on GitHub was saved with a different password, probably from another device. Enter that password to merge it. This device switches to it too.',
       submitLabel: 'Merge',
-      verify: (password) => unlockKey(jwe, password),
+      verify: async (candidate) => ({
+        key: await unlockKey(jwe, candidate),
+        password: candidate,
+      }),
     });
-    if (!key) {
+    if (!answer) {
       throw new Error('The backup needs its password.');
     }
+    ({ key, password } = answer);
     session.oldKeys.push(session.key);
     session.key = key;
     await saveGitHubSettings();
   }
   const remote = fromCxf(JSON.parse(await open(jwe, key)));
   const merged = mergeVaults(session.vault, remote);
-  if (fingerprint(merged) !== fingerprint(session.vault)) {
+  // A new password needs saving too, so this device unlocks with it.
+  if (password || fingerprint(merged) !== fingerprint(session.vault)) {
     session.vault = merged;
     await persist({ backup: false });
     renderList();
+  }
+  if (password) {
+    await refreshPasskey(password);
   }
   return fingerprint(merged) === fingerprint(remote) && key === session.key;
 }
@@ -823,14 +847,107 @@ $('#unlock-form').addEventListener('submit', async (event) => {
     const jwe = load(KEYS.vault);
     const key = await unlockKey(jwe, password.value);
     const vault = fromCxf(JSON.parse(await open(jwe, key)));
+    const typed = password.value;
     password.value = '';
     await startSession(key, vault);
+    await refreshPasskey(typed);
   } catch (problem) {
     error.textContent = problem.message;
     password.select();
   } finally {
     button.disabled = false;
     button.textContent = 'Unlock';
+  }
+});
+
+// Fingerprint unlock.
+
+/** Whether the passkey record unwraps the key the stored vault uses. */
+function passkeyCurrent(record = load(KEYS.passkey)) {
+  return (
+    Boolean(record) && record.encryptedKey === load(KEYS.vault)?.encrypted_key
+  );
+}
+
+async function unlockWithPasskey({ quiet = false } = {}) {
+  const record = load(KEYS.passkey);
+  const error = $('#unlock-error');
+  error.textContent = '';
+  if (!passkeyCurrent(record)) {
+    if (!quiet) {
+      error.textContent =
+        'The password changed since you turned on fingerprint unlock. Unlock with the password once to use your fingerprint again.';
+    }
+    return;
+  }
+  try {
+    const jwe = load(KEYS.vault);
+    const key = await unlockWithWrappedKey(
+      jwe,
+      record.wrappedKey,
+      await passkeyWrappingKey(record),
+    );
+    await startSession(key, fromCxf(JSON.parse(await open(jwe, key))));
+  } catch (problem) {
+    // Canceling the prompt needs no message, since the password still works.
+    if (!quiet && problem.name !== 'NotAllowedError') {
+      error.textContent = problem.message;
+    }
+    $('#password').focus();
+  }
+}
+
+/** Stores the vault key wrapped for the passkey of `record`. */
+async function enrollPasskey(record, wrappingKey, password) {
+  const jwe = load(KEYS.vault);
+  save(KEYS.passkey, {
+    ...record,
+    wrappedKey: await wrapKeyWith(jwe, password, wrappingKey),
+    encryptedKey: jwe.encrypted_key,
+  });
+}
+
+/**
+ * After the password changed, wraps the new vault key for the passkey, which
+ * asks for the fingerprint. Does nothing when fingerprint unlock is off or
+ * current.
+ */
+async function refreshPasskey(password) {
+  const record = load(KEYS.passkey);
+  if (!record || passkeyCurrent(record)) {
+    return;
+  }
+  try {
+    await enrollPasskey(record, await passkeyWrappingKey(record), password);
+    showToast('Fingerprint unlock now works with the new password.');
+  } catch {
+    showToast(
+      'Fingerprint unlock stays paused until you next unlock with the password.',
+    );
+  }
+}
+
+$('#passkey-unlock').addEventListener('click', () => unlockWithPasskey());
+
+// Cmd+F (Ctrl+F elsewhere) searches the vault while it's unlocked. Locked, or
+// with a dialog open, the browser's own search keeps the shortcut.
+// Chrome reports "macOS" and older APIs "MacIntel", so match any case.
+const isApple = /mac|iphone|ipad/i.test(
+  navigator.userAgentData?.platform ?? navigator.platform,
+);
+
+addEventListener('keydown', (event) => {
+  if (
+    session &&
+    event.key.toLowerCase() === 'f' &&
+    (isApple ? event.metaKey : event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !dialogs.some((dialog) => dialog.open)
+  ) {
+    event.preventDefault();
+    searchInput.focus();
+    searchInput.select();
   }
 });
 
@@ -1288,7 +1405,56 @@ function renderSettings() {
   $('#settings-sync').hidden = !session.github;
   $('#settings-disconnect').hidden = !session.github;
   renderSyncStatus();
+  renderPasskeySettings();
 }
+
+async function renderPasskeySettings() {
+  const record = load(KEYS.passkey);
+  const supported = Boolean(record) || (await passkeysSupported());
+  const toggle = $('#passkey-toggle');
+  toggle.textContent = record ? 'Turn off' : 'Turn on';
+  toggle.disabled = !supported;
+  $('#passkey-summary').textContent = !record
+    ? supported
+      ? 'Unlock with your fingerprint through a passkey on this device. The password keeps working, and new devices need it.'
+      : 'This browser can’t unlock with a fingerprint here. It needs passkeys with the PRF extension.'
+    : passkeyCurrent(record)
+      ? 'On. A passkey on this device unlocks the vault after your fingerprint, face, or device PIN.'
+      : 'Paused, because the password changed. Unlock with the password once to resume it.';
+}
+
+$('#passkey-toggle').addEventListener('click', async () => {
+  if (load(KEYS.passkey)) {
+    remove(KEYS.passkey);
+    showToast(
+      'Fingerprint unlock is off. You can delete the TOTP Vault passkey in your password manager.',
+    );
+    renderPasskeySettings();
+    return;
+  }
+  const password = await askPassword({
+    title: 'Turn on fingerprint unlock',
+    message: 'Enter the vault password once to confirm.',
+    submitLabel: 'Continue',
+    verify: async (candidate) => {
+      await unlockKey(load(KEYS.vault), candidate);
+      return candidate;
+    },
+  });
+  if (!password) {
+    return;
+  }
+  try {
+    const { record, wrappingKey } = await createPasskey();
+    await enrollPasskey(record, wrappingKey, password);
+    showToast('Fingerprint unlock is on.');
+  } catch (problem) {
+    if (problem.name !== 'NotAllowedError') {
+      showToast(problem.message);
+    }
+  }
+  renderPasskeySettings();
+});
 
 $('#settings-button').addEventListener('click', () => {
   renderSettings();
@@ -1340,17 +1506,24 @@ $('#settings-disconnect').addEventListener('click', () => {
 });
 
 $('#change-password').addEventListener('click', async () => {
-  const key = await askNewPassword(
-    'The vault on this device and the GitHub backup switch to this password. Other devices ask for it on their next sync.',
-  );
-  if (!key) {
+  const answer = await askPassword({
+    title: 'Choose a vault password',
+    message:
+      'The vault on this device and the GitHub backup switch to this password. Other devices ask for it on their next sync.',
+    submitLabel: 'Save',
+    confirm: true,
+    verify: async (password) => ({ key: await createKey(password), password }),
+  });
+  if (!answer) {
     return;
   }
   session.oldKeys.push(session.key);
-  session.key = key;
+  session.key = answer.key;
   await saveGitHubSettings();
   await persist();
   showToast('Password changed.');
+  await refreshPasskey(answer.password);
+  renderPasskeySettings();
 });
 
 // Export.
@@ -1417,7 +1590,7 @@ window.launchQueue?.setConsumer(() => {
   if (session) {
     focusSearch();
   } else if (!views.unlock.hidden) {
-    $('#password').focus();
+    offerUnlock();
   }
 });
 
@@ -1463,8 +1636,19 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
-render();
-// The unlock view is hidden while the page parses, so `autofocus` misses it.
-if (!views.unlock.hidden) {
+/**
+ * Readies the unlock view: the password field gets the focus, and with
+ * fingerprint unlock on, the fingerprint prompt appears right away.
+ */
+function offerUnlock() {
+  // The unlock view is hidden while the page parses, so `autofocus` misses it.
   $('#password').focus();
+  if (passkeyCurrent()) {
+    unlockWithPasskey({ quiet: true });
+  }
+}
+
+render();
+if (!views.unlock.hidden) {
+  offerUnlock();
 }

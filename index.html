@@ -105,6 +105,9 @@
           <p class="error" id="unlock-error" role="alert"></p>
           <button type="submit" class="primary">Unlock</button>
         </form>
+        <button type="button" id="passkey-unlock" hidden>
+          Unlock with fingerprint
+        </button>
         <button type="button" class="link" id="forget-locked">
           Use a different vault
         </button>
@@ -468,6 +471,13 @@
             <button type="button" id="settings-disconnect" class="danger">
               Turn off
             </button>
+          </div>
+        </section>
+        <section class="stack">
+          <h3>Fingerprint unlock</h3>
+          <p class="note" id="passkey-summary"></p>
+          <div class="buttons start">
+            <button type="button" id="passkey-toggle">Turn on</button>
           </div>
         </section>
         <section class="stack">

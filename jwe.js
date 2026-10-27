@@ -120,6 +120,43 @@ export async function unlockKey(jwe, password) {
   if (!isJwe(jwe)) {
     throw new Error('This is not an encrypted vault.');
   }
+  const cek = await unwrapContentKey(jwe, password, false);
+  return { cek, protected: jwe.protected, encryptedKey: jwe.encrypted_key };
+}
+
+/**
+ * Wraps the content key of `key`, a vault key or a JWE, with `wrappingKey`,
+ * so `unlockWithWrappedKey()` can unlock the vault without the password,
+ * which this needs once to reach the key.
+ */
+export async function wrapKeyWith(key, password, wrappingKey) {
+  const jwe = {
+    protected: key.protected,
+    encrypted_key: key.encrypted_key ?? key.encryptedKey,
+  };
+  const cek = await unwrapContentKey(jwe, password, true);
+  return toBase64Url(
+    new Uint8Array(
+      await crypto.subtle.wrapKey('raw', cek, wrappingKey, 'AES-KW'),
+    ),
+  );
+}
+
+/** Unlocks the key of `jwe` from a key wrapped by `wrapKeyWith()`. */
+export async function unlockWithWrappedKey(jwe, wrapped, wrappingKey) {
+  const cek = await crypto.subtle.unwrapKey(
+    'raw',
+    fromBase64Url(wrapped),
+    wrappingKey,
+    'AES-KW',
+    'AES-GCM',
+    false,
+    ['encrypt', 'decrypt'],
+  );
+  return { cek, protected: jwe.protected, encryptedKey: jwe.encrypted_key };
+}
+
+async function unwrapContentKey(jwe, password, extractable) {
   const header = JSON.parse(decoder.decode(fromBase64Url(jwe.protected)));
   if (header.alg !== ALG || header.enc !== ENC) {
     throw new Error(
@@ -138,22 +175,20 @@ export async function unlockKey(jwe, password) {
     fromBase64Url(header.p2s),
     header.p2c,
   );
-  let cek;
   try {
     // AES key wrap has an integrity check, so a wrong password fails here.
-    cek = await crypto.subtle.unwrapKey(
+    return await crypto.subtle.unwrapKey(
       'raw',
       fromBase64Url(jwe.encrypted_key),
       wrappingKey,
       'AES-KW',
       'AES-GCM',
-      false,
+      extractable,
       ['encrypt', 'decrypt'],
     );
   } catch {
     throw new WrongPasswordError();
   }
-  return { cek, protected: jwe.protected, encryptedKey: jwe.encrypted_key };
 }
 
 /** Whether `jwe` was sealed with `key`, so `open()` can skip the password. */

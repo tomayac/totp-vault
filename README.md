@@ -71,6 +71,16 @@ GitHub**.
 Changing the password re-encrypts the vault, but earlier commits in the
 repository keep the old password.
 
+## Fingerprint unlock
+
+Under **Settings**, the app can create a passkey on the device and use the
+WebAuthn [PRF extension][prf]: after user verification, such as a fingerprint,
+the passkey returns a secret that's fixed for it. The app derives an AES key
+from that secret with HKDF and stores the vault's content key wrapped with it,
+so unlocking needs the fingerprint and no stored password. The password keeps
+working, and other devices need it. After a password change, the app wraps the
+new key for the passkey, which asks for the fingerprint once.
+
 ## Icons
 
 Each token can show an icon, stored with it so it works offline and travels with
@@ -95,3 +105,4 @@ npm test
 [otpauth]: https://github.com/google/google-authenticator/wiki/Key-Uri-Format
 [pat]: https://github.com/settings/personal-access-tokens/new
 [icon-horse]: https://icon.horse
+[prf]: https://w3c.github.io/webauthn/#prf-extension

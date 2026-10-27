@@ -15,35 +15,39 @@ export const KEYS = {
   passkey: 'totp-vault.passkey',
 };
 
-// Keeps values for this page load when storage is unavailable, for example
-// in a private window that blocks it.
-const fallback = new Map();
+// Keeps the values that couldn't be saved, for this page load, for example in
+// a private window that blocks storage or when storage is full. Storage
+// stays the source of truth for everything else, since other windows of the
+// app change it too.
+const unsaved = new Map();
 
 export function load(key) {
+  if (unsaved.has(key)) {
+    return unsaved.get(key);
+  }
   try {
     const raw = localStorage.getItem(key);
-    if (raw) {
-      return JSON.parse(raw);
-    }
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    // Unreadable or blocked storage: fall through.
+    // Unreadable or blocked storage.
+    return null;
   }
-  return fallback.get(key) ?? null;
 }
 
 /** Returns whether `value` reached persistent storage. */
 export function save(key, value) {
-  fallback.set(key, value);
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    unsaved.delete(key);
     return true;
   } catch {
+    unsaved.set(key, value);
     return false;
   }
 }
 
 export function remove(key) {
-  fallback.delete(key);
+  unsaved.delete(key);
   try {
     localStorage.removeItem(key);
   } catch {

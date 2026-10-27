@@ -81,6 +81,13 @@ so unlocking needs the fingerprint and no stored password. The password keeps
 working, and other devices need it. After a password change, the app wraps the
 new key for the passkey, which asks for the fingerprint once.
 
+With the laptop closed, the fingerprint reader is out of reach, so the password
+comes first. With the window management permission, which a setting asks for,
+the app follows the [Window Management API][wm]: while no screen with
+`isInternal` is on, the lid is closed. Without the permission, the app remembers
+how you last unlocked on each display setup, identified by the size and pixel
+density of the screen and whether more than one is on.
+
 ## Icons
 
 Each token can show an icon, stored with it so it works offline and travels with
@@ -106,3 +113,4 @@ npm test
 [pat]: https://github.com/settings/personal-access-tokens/new
 [icon-horse]: https://icon.horse
 [prf]: https://w3c.github.io/webauthn/#prf-extension
+[wm]: https://w3c.github.io/window-management/

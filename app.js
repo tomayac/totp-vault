@@ -41,6 +41,7 @@ import {
   passkeysSupported,
 } from './passkey.js';
 import { Scanner, saveCamera, scanImage } from './scanner.js';
+import { rememberChoice, screenSignature } from './screens.js';
 import { KEYS, load, remove, save } from './store.js';
 import { byUsage, recordUse } from './usage.js';
 import {
@@ -70,6 +71,8 @@ const ICONS_DISMISSED_KEY = 'totp-vault.icons-dismissed';
 const PASSKEY_OFFERED_KEY = 'totp-vault.passkey-offered';
 // Whether a closed laptop makes the password the default, see `watchScreens()`.
 const LID_KEY = 'totp-vault.lid-check';
+// How the user last unlocked on each display setup, see `screens.js`.
+const SCREEN_CHOICES_KEY = 'totp-vault.screen-choices';
 const DEFAULT_GITHUB = {
   owner: '',
   repo: 'totp-vault-data',
@@ -376,6 +379,7 @@ function forgetDevice() {
     ICONS_DISMISSED_KEY,
     PASSKEY_OFFERED_KEY,
     LID_KEY,
+    SCREEN_CHOICES_KEY,
   ]) {
     remove(key);
   }
@@ -870,8 +874,14 @@ $('#unlock-form').addEventListener('submit', async (event) => {
     const key = await unlockKey(jwe, password.value);
     const vault = fromCxf(JSON.parse(await open(jwe, key)));
     const typed = password.value;
+    // With fingerprint unlock at hand, typing the password is a choice for
+    // this display setup.
+    const chosePassword = fingerprintReady();
     password.value = '';
     await startSession(key, vault);
+    if (chosePassword) {
+      rememberUnlock('password');
+    }
     await refreshPasskey(typed);
     await offerPasskey(typed);
   } catch (problem) {
@@ -908,7 +918,36 @@ let lidClosed = false;
 
 /** Whether fingerprint unlock leads, which needs the reader within reach. */
 function fingerprintFirst() {
-  return fingerprintReady() && !lidClosed;
+  return fingerprintReady() && !passwordFirstHere();
+}
+
+function currentScreen() {
+  return screenSignature({
+    width: screen.width,
+    height: screen.height,
+    devicePixelRatio,
+    isExtended: screen.isExtended,
+  });
+}
+
+/**
+ * Whether the password leads on this display setup. With the window
+ * management permission, that's while the lid is closed. Without it, the app
+ * goes by how the user last unlocked on this setup.
+ */
+function passwordFirstHere() {
+  if (screenDetails) {
+    return lidClosed;
+  }
+  return load(SCREEN_CHOICES_KEY)?.[currentScreen()] === 'password';
+}
+
+/** Remembers `choice` for this display setup, see `passwordFirstHere()`. */
+function rememberUnlock(choice) {
+  save(
+    SCREEN_CHOICES_KEY,
+    rememberChoice(load(SCREEN_CHOICES_KEY), currentScreen(), choice),
+  );
 }
 
 function unlockLabel() {
@@ -1065,6 +1104,7 @@ async function promptForPasskey({ quiet = false } = {}) {
       await passkeyWrappingKey(record, passkeyAbort.signal),
     );
     await startSession(key, fromCxf(JSON.parse(await open(jwe, key))));
+    rememberUnlock('fingerprint');
   } catch (problem) {
     if (session) {
       return;
@@ -1105,7 +1145,16 @@ addEventListener('blur', () => {
     leftSincePrompt = true;
   }
 });
-addEventListener('focus', promptOnForeground);
+addEventListener('focus', () => {
+  // The window may have moved to another display meanwhile.
+  if (!session) {
+    renderUnlockView();
+  }
+  promptOnForeground();
+});
+// Moving to another display or changing the setup changes the default.
+screen.addEventListener?.('change', renderUnlockView);
+addEventListener('resize', renderUnlockView);
 
 /** Turns on fingerprint unlock, which asks to create a passkey. */
 async function turnOnPasskey(password) {
@@ -1675,7 +1724,7 @@ async function renderPasskeySettings() {
     ? screenDetails
       ? 'With the laptop closed, the password comes first, since the fingerprint reader is out of reach.'
       : 'Prefer the password with the laptop closed. The permission to see your displays is missing.'
-    : 'Prefer the password with the laptop closed and only external displays on. This needs permission to see your displays.';
+    : 'Prefer the password with the laptop closed and only external displays on. This needs permission to see your displays. Without it, the app goes by how you last unlocked on each display setup.';
 }
 
 $('#lid-toggle').addEventListener('click', async () => {

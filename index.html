@@ -90,9 +90,12 @@
       </section>
 
       <section id="unlock-view" class="panel" hidden>
+        <h2>Unlock</h2>
+        <p>Your vault on this device is encrypted with your password.</p>
+        <button type="button" id="passkey-unlock" hidden>
+          Unlock with fingerprint
+        </button>
         <form id="unlock-form" class="stack">
-          <h2>Unlock</h2>
-          <p>Your vault on this device is encrypted with your password.</p>
           <label
             >Password
             <input
@@ -105,9 +108,6 @@
           <p class="error" id="unlock-error" role="alert"></p>
           <button type="submit" class="primary">Unlock</button>
         </form>
-        <button type="button" id="passkey-unlock" hidden>
-          Unlock with fingerprint
-        </button>
         <button type="button" class="link" id="forget-locked">
           Use a different vault
         </button>

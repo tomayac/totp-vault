@@ -50,7 +50,7 @@ async function wrappingKeyFrom(secret) {
   );
 }
 
-async function evaluate(credentialId, salt) {
+async function evaluate(credentialId, salt, signal) {
   const credential = await navigator.credentials.get({
     publicKey: {
       challenge: randomBytes(32),
@@ -58,6 +58,7 @@ async function evaluate(credentialId, salt) {
       userVerification: 'required',
       extensions: { prf: { eval: { first: salt } } },
     },
+    signal,
   });
   const secret = credential.getClientExtensionResults().prf?.results?.first;
   if (!secret) {
@@ -111,12 +112,16 @@ export async function createPasskey() {
   };
 }
 
-/** Asks for the fingerprint and returns the record's wrapping key. */
-export async function passkeyWrappingKey(record) {
+/**
+ * Asks for the fingerprint and returns the record's wrapping key. Aborting
+ * `signal` closes the prompt.
+ */
+export async function passkeyWrappingKey(record, signal) {
   return wrappingKeyFrom(
     await evaluate(
       fromBase64Url(record.credentialId),
       fromBase64Url(record.salt),
+      signal,
     ),
   );
 }

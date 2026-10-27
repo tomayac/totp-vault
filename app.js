@@ -66,6 +66,8 @@ const ICON_RETRIES = 4;
 const SYNC_DELAY_MS = 1500;
 const MIN_PASSWORD_LENGTH = 8;
 const ICONS_DISMISSED_KEY = 'totp-vault.icons-dismissed';
+// Fingerprint unlock is offered once per vault, then lives in Settings.
+const PASSKEY_OFFERED_KEY = 'totp-vault.passkey-offered';
 const DEFAULT_GITHUB = {
   owner: '',
   repo: 'totp-vault-data',
@@ -173,7 +175,7 @@ function render() {
   views.welcome.hidden = Boolean(session) || stored;
   views.unlock.hidden = Boolean(session) || !stored;
   views.vault.hidden = !session;
-  $('#passkey-unlock').hidden = !load(KEYS.passkey);
+  renderUnlockView();
   for (const id of [
     'add-button',
     'import-button',
@@ -303,6 +305,8 @@ async function saveGitHubSettings() {
 }
 
 async function startSession(key, vault, github = null) {
+  // Unlocked some other way, a fingerprint prompt has nothing left to do.
+  passkeyAbort?.abort();
   session = { key, vault, hmacKeys: new Map(), github, oldKeys: [] };
   if (!github) {
     const sealed = load(KEYS.github);
@@ -334,6 +338,7 @@ async function createVault(key, vault) {
   remove(KEYS.github);
   remove(KEYS.sync);
   remove(KEYS.passkey);
+  remove(PASSKEY_OFFERED_KEY);
   remove(ICONS_DISMISSED_KEY);
   session = { key, vault, hmacKeys: new Map(), github: null, oldKeys: [] };
   await persist({ backup: false });
@@ -352,7 +357,9 @@ async function lock() {
     dialog.close();
   }
   render();
-  $('#password').focus();
+  if (!passkeyCurrent() || matchMedia('(pointer: fine)').matches) {
+    $('#password').focus();
+  }
 }
 
 function forgetDevice() {
@@ -363,7 +370,11 @@ function forgetDevice() {
   ) {
     return;
   }
-  for (const key of [...Object.values(KEYS), ICONS_DISMISSED_KEY]) {
+  for (const key of [
+    ...Object.values(KEYS),
+    ICONS_DISMISSED_KEY,
+    PASSKEY_OFFERED_KEY,
+  ]) {
     remove(key);
   }
   session = null;
@@ -501,7 +512,7 @@ function askNewPassword(message) {
     message,
     submitLabel: 'Save',
     confirm: true,
-    verify: createKey,
+    verify: async (password) => ({ key: await createKey(password), password }),
   });
 }
 
@@ -728,19 +739,20 @@ async function importIntoNewVault(files) {
   for (const other of rest) {
     addTokens(vault, other.tokens);
   }
-  const key = await askNewPassword(
+  const answer = await askNewPassword(
     `${plural(vault.tokens.length, 'token')} ready. This password encrypts your vault on this device and in your GitHub backup.` +
       (encrypted ? ' It may differ from the file’s password.' : ''),
   );
-  if (!key) {
+  if (!answer) {
     return;
   }
-  await createVault(key, vault);
+  await createVault(answer.key, vault);
   showToast(
     [`Imported ${plural(vault.tokens.length, 'token')}.`, ...problems].join(
       ' ',
     ),
   );
+  await offerPasskey(answer.password);
 }
 
 async function importIntoVault(files) {
@@ -794,11 +806,12 @@ document.addEventListener('drop', (event) => {
 // Onboarding, unlocking, and locking.
 
 $('#welcome-empty').addEventListener('click', async () => {
-  const key = await askNewPassword(
+  const answer = await askNewPassword(
     'This password encrypts your vault on this device and in your GitHub backup. You need it on every device.',
   );
-  if (key) {
-    await createVault(key, emptyVault());
+  if (answer) {
+    await createVault(answer.key, emptyVault());
+    await offerPasskey(answer.password);
   }
 });
 
@@ -817,22 +830,29 @@ $('#welcome-github').addEventListener('click', async () => {
   if (!found) {
     return;
   }
-  const key = await askPassword({
+  const answer = await askPassword({
     title: 'Unlock your backup',
     message: `Enter the password of the vault in ${found.settings.owner}/${found.settings.repo}.`,
     submitLabel: 'Unlock',
-    verify: (password) => unlockKey(found.jwe, password),
+    verify: async (password) => ({
+      key: await unlockKey(found.jwe, password),
+      password,
+    }),
   });
-  if (!key) {
+  if (!answer) {
     return;
   }
+  const { key, password } = answer;
   const vault = fromCxf(JSON.parse(await open(found.jwe, key)));
   save(KEYS.vault, found.jwe);
   save(KEYS.sync, { sha: found.remote.sha, dirty: false });
+  remove(KEYS.passkey);
+  remove(PASSKEY_OFFERED_KEY);
   remove(ICONS_DISMISSED_KEY);
   await startSession(key, vault, found.settings);
   await saveGitHubSettings();
   showToast(`Restored ${plural(vault.tokens.length, 'token')}.`);
+  await offerPasskey(password);
 });
 
 $('#unlock-form').addEventListener('submit', async (event) => {
@@ -851,16 +871,33 @@ $('#unlock-form').addEventListener('submit', async (event) => {
     password.value = '';
     await startSession(key, vault);
     await refreshPasskey(typed);
+    await offerPasskey(typed);
   } catch (problem) {
     error.textContent = problem.message;
     password.select();
   } finally {
     button.disabled = false;
-    button.textContent = 'Unlock';
+    button.textContent = unlockLabel();
   }
 });
 
 // Fingerprint unlock.
+
+function unlockLabel() {
+  return passkeyCurrent() ? 'Unlock with password' : 'Unlock';
+}
+
+/** With fingerprint unlock on, it leads, and the password is the fallback. */
+function renderUnlockView() {
+  const record = load(KEYS.passkey);
+  const fingerprintFirst = passkeyCurrent(record);
+  const passkeyButton = $('#passkey-unlock');
+  passkeyButton.hidden = !record;
+  passkeyButton.classList.toggle('primary', fingerprintFirst);
+  const submit = $('#unlock-form [type=submit]');
+  submit.classList.toggle('primary', !fingerprintFirst);
+  submit.textContent = unlockLabel();
+}
 
 /** Whether the passkey record unwraps the key the stored vault uses. */
 function passkeyCurrent(record = load(KEYS.passkey)) {
@@ -869,7 +906,26 @@ function passkeyCurrent(record = load(KEYS.passkey)) {
   );
 }
 
-async function unlockWithPasskey({ quiet = false } = {}) {
+// The fingerprint prompt in progress, so only one ever shows, and its abort
+// controller, so unlocking with the password can close it.
+let passkeyPrompt = null;
+let passkeyAbort = null;
+// When the last prompt ended, and whether the user left the app since.
+// Closing a prompt hands the focus back to the window, which mustn't count
+// as coming back, or canceling would only bring up the next prompt.
+let promptEndedAt = 0;
+let leftSincePrompt = true;
+
+function unlockWithPasskey(options) {
+  passkeyPrompt ??= promptForPasskey(options).finally(() => {
+    passkeyPrompt = null;
+    promptEndedAt = Date.now();
+    leftSincePrompt = false;
+  });
+  return passkeyPrompt;
+}
+
+async function promptForPasskey({ quiet = false } = {}) {
   const record = load(KEYS.passkey);
   const error = $('#unlock-error');
   error.textContent = '';
@@ -880,21 +936,84 @@ async function unlockWithPasskey({ quiet = false } = {}) {
     }
     return;
   }
+  passkeyAbort = new AbortController();
   try {
     const jwe = load(KEYS.vault);
     const key = await unlockWithWrappedKey(
       jwe,
       record.wrappedKey,
-      await passkeyWrappingKey(record),
+      await passkeyWrappingKey(record, passkeyAbort.signal),
     );
     await startSession(key, fromCxf(JSON.parse(await open(jwe, key))));
   } catch (problem) {
+    if (session) {
+      return;
+    }
     // Canceling the prompt needs no message, since the password still works.
-    if (!quiet && problem.name !== 'NotAllowedError') {
+    if (
+      !quiet &&
+      problem.name !== 'NotAllowedError' &&
+      problem.name !== 'AbortError'
+    ) {
       error.textContent = problem.message;
     }
-    $('#password').focus();
+    if (matchMedia('(pointer: fine)').matches) {
+      $('#password').focus();
+    }
   }
+}
+
+/** Asks for the fingerprint when a locked app comes to the foreground. */
+function promptOnForeground() {
+  if (
+    !session &&
+    !views.unlock.hidden &&
+    leftSincePrompt &&
+    !passkeyPrompt &&
+    !document.hidden &&
+    document.hasFocus() &&
+    passkeyCurrent()
+  ) {
+    unlockWithPasskey({ quiet: true });
+  }
+}
+
+addEventListener('blur', () => {
+  // A blur right as a prompt ends belongs to the prompt.
+  if (!passkeyPrompt && Date.now() - promptEndedAt > 1000) {
+    leftSincePrompt = true;
+  }
+});
+addEventListener('focus', promptOnForeground);
+
+/** Turns on fingerprint unlock, which asks to create a passkey. */
+async function turnOnPasskey(password) {
+  try {
+    const { record, wrappingKey } = await createPasskey();
+    await enrollPasskey(record, wrappingKey, password);
+    showToast('Fingerprint unlock is on.');
+  } catch (problem) {
+    if (problem.name !== 'NotAllowedError') {
+      showToast(problem.message);
+    }
+  }
+}
+
+/**
+ * Makes fingerprint unlock the default: the first time a password is set or
+ * typed for a vault, asks to create the passkey. Declining leaves the switch
+ * in Settings.
+ */
+async function offerPasskey(password) {
+  if (
+    load(KEYS.passkey) ||
+    load(PASSKEY_OFFERED_KEY) ||
+    !(await passkeysSupported())
+  ) {
+    return;
+  }
+  save(PASSKEY_OFFERED_KEY, true);
+  await turnOnPasskey(password);
 }
 
 /** Stores the vault key wrapped for the passkey of `record`. */
@@ -959,12 +1078,16 @@ for (const type of ['pointerdown', 'keydown']) {
   addEventListener(type, () => (lastActivity = Date.now()), { passive: true });
 }
 
-document.addEventListener('visibilitychange', () => {
+document.addEventListener('visibilitychange', async () => {
   if (document.hidden) {
     hiddenAt = Date.now();
-  } else if (session && Date.now() - hiddenAt > HIDDEN_LOCK_MS) {
-    lock();
+    leftSincePrompt = true;
+    return;
   }
+  if (session && Date.now() - hiddenAt > HIDDEN_LOCK_MS) {
+    await lock();
+  }
+  promptOnForeground();
 });
 
 // Token list.
@@ -1399,6 +1522,9 @@ document.addEventListener('paste', (event) => {
 // Settings.
 
 function renderSettings() {
+  if (!session) {
+    return;
+  }
   $('#settings-github').textContent = session.github
     ? 'Change'
     : 'Set up backup';
@@ -1444,15 +1570,7 @@ $('#passkey-toggle').addEventListener('click', async () => {
   if (!password) {
     return;
   }
-  try {
-    const { record, wrappingKey } = await createPasskey();
-    await enrollPasskey(record, wrappingKey, password);
-    showToast('Fingerprint unlock is on.');
-  } catch (problem) {
-    if (problem.name !== 'NotAllowedError') {
-      showToast(problem.message);
-    }
-  }
+  await turnOnPasskey(password);
   renderPasskeySettings();
 });
 
@@ -1637,12 +1755,14 @@ if ('serviceWorker' in navigator) {
 }
 
 /**
- * Readies the unlock view: the password field gets the focus, and with
- * fingerprint unlock on, the fingerprint prompt appears right away.
+ * Readies the unlock view: with fingerprint unlock on, the fingerprint prompt
+ * appears right away, and otherwise the password field gets the focus.
  */
 function offerUnlock() {
   // The unlock view is hidden while the page parses, so `autofocus` misses it.
-  $('#password').focus();
+  if (!passkeyCurrent() || matchMedia('(pointer: fine)').matches) {
+    $('#password').focus();
+  }
   if (passkeyCurrent()) {
     unlockWithPasskey({ quiet: true });
   }

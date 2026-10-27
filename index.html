@@ -92,8 +92,15 @@
       <section id="unlock-view" class="panel" hidden>
         <h2>Unlock</h2>
         <p>Your vault on this device is encrypted with your password.</p>
+        <p class="note" id="passkey-paused" hidden>
+          Fingerprint unlock is paused because the password changed. Unlock with
+          the password once to resume it.
+        </p>
         <button type="button" id="passkey-unlock" hidden>
           Unlock with fingerprint
+        </button>
+        <button type="button" class="link" id="use-password" hidden>
+          Use password instead
         </button>
         <form id="unlock-form" class="stack">
           <label

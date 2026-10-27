@@ -353,13 +353,12 @@ async function lock() {
     await sync();
   }
   session = null;
+  passwordRevealed = false;
   for (const dialog of dialogs) {
     dialog.close();
   }
   render();
-  if (!passkeyCurrent() || matchMedia('(pointer: fine)').matches) {
-    $('#password').focus();
-  }
+  focusPassword();
 }
 
 function forgetDevice() {
@@ -883,21 +882,64 @@ $('#unlock-form').addEventListener('submit', async (event) => {
 
 // Fingerprint unlock.
 
-function unlockLabel() {
-  return passkeyCurrent() ? 'Unlock with password' : 'Unlock';
+// Whether this browser can do passkeys with PRF. Assumed until checked, and a
+// failing prompt reveals the password anyway.
+let passkeysAvailable = true;
+passkeysSupported().then((available) => {
+  passkeysAvailable = available;
+  renderUnlockView();
+});
+
+// Whether the password form shows although fingerprint unlock works, after
+// "Use password instead" or a failed prompt. Locking hides it again.
+let passwordRevealed = false;
+
+/** Whether fingerprint unlock can unlock the vault on this device. */
+function fingerprintReady() {
+  return passkeysAvailable && passkeyCurrent();
 }
 
-/** With fingerprint unlock on, it leads, and the password is the fallback. */
+function unlockLabel() {
+  return fingerprintReady() ? 'Unlock with password' : 'Unlock';
+}
+
+/**
+ * With fingerprint unlock working, the screen shows only its button and a
+ * link to the password. The password form shows whenever fingerprint unlock
+ * can't help: when it's off, paused, unsupported, or a prompt failed.
+ */
 function renderUnlockView() {
   const record = load(KEYS.passkey);
-  const fingerprintFirst = passkeyCurrent(record);
+  const fingerprint = fingerprintReady();
+  const showPassword = !fingerprint || passwordRevealed;
   const passkeyButton = $('#passkey-unlock');
-  passkeyButton.hidden = !record;
-  passkeyButton.classList.toggle('primary', fingerprintFirst);
+  passkeyButton.hidden = !fingerprint;
+  passkeyButton.classList.toggle('primary', fingerprint);
+  $('#passkey-paused').hidden = !record || passkeyCurrent(record);
+  $('#use-password').hidden = showPassword;
+  $('#unlock-form').hidden = !showPassword;
   const submit = $('#unlock-form [type=submit]');
-  submit.classList.toggle('primary', !fingerprintFirst);
+  submit.classList.toggle('primary', !fingerprint);
   submit.textContent = unlockLabel();
 }
+
+/** Focuses the password field when it shows, except on touch devices. */
+function focusPassword() {
+  if (
+    !$('#unlock-form').hidden &&
+    (!fingerprintReady() || matchMedia('(pointer: fine)').matches)
+  ) {
+    $('#password').focus();
+  }
+}
+
+function revealPassword() {
+  passwordRevealed = true;
+  renderUnlockView();
+  $('#password').focus();
+}
+
+$('#use-password').addEventListener('click', revealPassword);
 
 /** Whether the passkey record unwraps the key the stored vault uses. */
 function passkeyCurrent(record = load(KEYS.passkey)) {
@@ -957,9 +999,10 @@ async function promptForPasskey({ quiet = false } = {}) {
     ) {
       error.textContent = problem.message;
     }
-    if (matchMedia('(pointer: fine)').matches) {
-      $('#password').focus();
-    }
+    // A canceled or failed prompt leaves the password as the way in.
+    passwordRevealed = true;
+    renderUnlockView();
+    focusPassword();
   }
 }
 
@@ -972,7 +1015,7 @@ function promptOnForeground() {
     !passkeyPrompt &&
     !document.hidden &&
     document.hasFocus() &&
-    passkeyCurrent()
+    fingerprintReady()
   ) {
     unlockWithPasskey({ quiet: true });
   }
@@ -1760,10 +1803,8 @@ if ('serviceWorker' in navigator) {
  */
 function offerUnlock() {
   // The unlock view is hidden while the page parses, so `autofocus` misses it.
-  if (!passkeyCurrent() || matchMedia('(pointer: fine)').matches) {
-    $('#password').focus();
-  }
-  if (passkeyCurrent()) {
+  focusPassword();
+  if (fingerprintReady()) {
     unlockWithPasskey({ quiet: true });
   }
 }

@@ -68,6 +68,8 @@ const MIN_PASSWORD_LENGTH = 8;
 const ICONS_DISMISSED_KEY = 'totp-vault.icons-dismissed';
 // Fingerprint unlock is offered once per vault, then lives in Settings.
 const PASSKEY_OFFERED_KEY = 'totp-vault.passkey-offered';
+// Whether a closed laptop makes the password the default, see `watchScreens()`.
+const LID_KEY = 'totp-vault.lid-check';
 const DEFAULT_GITHUB = {
   owner: '',
   repo: 'totp-vault-data',
@@ -373,6 +375,7 @@ function forgetDevice() {
     ...Object.values(KEYS),
     ICONS_DISMISSED_KEY,
     PASSKEY_OFFERED_KEY,
+    LID_KEY,
   ]) {
     remove(key);
   }
@@ -899,8 +902,17 @@ function fingerprintReady() {
   return passkeysAvailable && passkeyCurrent();
 }
 
+// Whether the laptop's lid is closed, which puts its fingerprint reader out
+// of reach. See `watchScreens()`.
+let lidClosed = false;
+
+/** Whether fingerprint unlock leads, which needs the reader within reach. */
+function fingerprintFirst() {
+  return fingerprintReady() && !lidClosed;
+}
+
 function unlockLabel() {
-  return fingerprintReady() ? 'Unlock with password' : 'Unlock';
+  return fingerprintFirst() ? 'Unlock with password' : 'Unlock';
 }
 
 /**
@@ -910,16 +922,23 @@ function unlockLabel() {
  */
 function renderUnlockView() {
   const record = load(KEYS.passkey);
-  const fingerprint = fingerprintReady();
-  const showPassword = !fingerprint || passwordRevealed;
+  const first = fingerprintFirst();
+  const showPassword = !first || passwordRevealed;
   const passkeyButton = $('#passkey-unlock');
-  passkeyButton.hidden = !fingerprint;
-  passkeyButton.classList.toggle('primary', fingerprint);
+  const form = $('#unlock-form');
+  passkeyButton.hidden = !fingerprintReady();
+  passkeyButton.classList.toggle('primary', first);
+  // As the second choice, with the lid closed, it moves below the password.
+  if (first) {
+    form.before(passkeyButton);
+  } else {
+    form.after(passkeyButton);
+  }
   $('#passkey-paused').hidden = !record || passkeyCurrent(record);
   $('#use-password').hidden = showPassword;
-  $('#unlock-form').hidden = !showPassword;
+  form.hidden = !showPassword;
   const submit = $('#unlock-form [type=submit]');
-  submit.classList.toggle('primary', !fingerprint);
+  submit.classList.toggle('primary', !first);
   submit.textContent = unlockLabel();
 }
 
@@ -927,7 +946,7 @@ function renderUnlockView() {
 function focusPassword() {
   if (
     !$('#unlock-form').hidden &&
-    (!fingerprintReady() || matchMedia('(pointer: fine)').matches)
+    (!fingerprintFirst() || matchMedia('(pointer: fine)').matches)
   ) {
     $('#password').focus();
   }
@@ -940,6 +959,65 @@ function revealPassword() {
 }
 
 $('#use-password').addEventListener('click', revealPassword);
+
+// Closed laptop. With the lid closed and external displays attached, macOS
+// turns the built-in display off, and it drops out of the screen list of the
+// Window Management API, which marks built-in screens with `isInternal`.
+// That needs the window management permission, which the setting asks for,
+// and `screenschange` reports the lid opening and closing.
+let screenDetails = null;
+
+function updateLid() {
+  const screens = screenDetails?.screens ?? [];
+  lidClosed =
+    screens.length > 0 && !screens.some((screen) => screen.isInternal);
+  renderUnlockView();
+}
+
+async function windowManagementGranted() {
+  // Older versions of Chrome call the permission "window-placement".
+  for (const name of ['window-management', 'window-placement']) {
+    try {
+      return (await navigator.permissions.query({ name })).state === 'granted';
+    } catch {
+      // Unknown permission name: try the next one.
+    }
+  }
+  return false;
+}
+
+/**
+ * Starts following the screens. With `ask`, requests the permission, which
+ * needs a click; without, only works once it's granted. Returns whether the
+ * screens are followed.
+ */
+async function watchScreens({ ask = false } = {}) {
+  if (!('getScreenDetails' in window)) {
+    return false;
+  }
+  try {
+    if (!ask && !(await windowManagementGranted())) {
+      return false;
+    }
+    if (!screenDetails) {
+      screenDetails = await getScreenDetails();
+      screenDetails.addEventListener('screenschange', updateLid);
+    }
+    updateLid();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopWatchingScreens() {
+  screenDetails?.removeEventListener('screenschange', updateLid);
+  screenDetails = null;
+  lidClosed = false;
+  renderUnlockView();
+}
+
+const screensWatched = load(LID_KEY) ? watchScreens() : Promise.resolve();
 
 /** Whether the passkey record unwraps the key the stored vault uses. */
 function passkeyCurrent(record = load(KEYS.passkey)) {
@@ -1015,7 +1093,7 @@ function promptOnForeground() {
     !passkeyPrompt &&
     !document.hidden &&
     document.hasFocus() &&
-    fingerprintReady()
+    fingerprintFirst()
   ) {
     unlockWithPasskey({ quiet: true });
   }
@@ -1590,7 +1668,27 @@ async function renderPasskeySettings() {
     : passkeyCurrent(record)
       ? 'On. A passkey on this device unlocks the vault after your fingerprint, face, or device PIN.'
       : 'Paused, because the password changed. Unlock with the password once to resume it.';
+  const lidOn = Boolean(load(LID_KEY));
+  $('#lid-setting').hidden = !record || !('getScreenDetails' in window);
+  $('#lid-toggle').textContent = lidOn ? 'Turn off' : 'Turn on';
+  $('#lid-summary').textContent = lidOn
+    ? screenDetails
+      ? 'With the laptop closed, the password comes first, since the fingerprint reader is out of reach.'
+      : 'Prefer the password with the laptop closed. The permission to see your displays is missing.'
+    : 'Prefer the password with the laptop closed and only external displays on. This needs permission to see your displays.';
 }
+
+$('#lid-toggle').addEventListener('click', async () => {
+  if (load(LID_KEY) && screenDetails) {
+    remove(LID_KEY);
+    stopWatchingScreens();
+  } else if (await watchScreens({ ask: true })) {
+    save(LID_KEY, true);
+  } else {
+    showToast('The browser didn’t allow access to the list of displays.');
+  }
+  renderPasskeySettings();
+});
 
 $('#passkey-toggle').addEventListener('click', async () => {
   if (load(KEYS.passkey)) {
@@ -1804,12 +1902,14 @@ if ('serviceWorker' in navigator) {
 function offerUnlock() {
   // The unlock view is hidden while the page parses, so `autofocus` misses it.
   focusPassword();
-  if (fingerprintReady()) {
+  if (fingerprintFirst()) {
     unlockWithPasskey({ quiet: true });
   }
 }
 
 render();
+// Whether the lid is closed decides between the fingerprint and the password.
+await screensWatched;
 if (!views.unlock.hidden) {
   offerUnlock();
 }
